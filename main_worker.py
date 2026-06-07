@@ -1,18 +1,39 @@
-# main_worker.py
-import schedule, time, os
-from src.onchain_monitor.ankr_client import AnkrClient
-from src.onchain_monitor.snapshot import build_snapshot
+import time, os, json, sys, urllib.request
+from datetime import datetime
 
-CONTRACT = os.environ["CONTRACT_ADDRESS"]
+sys.path.insert(0, "/app/src")
+
+from onchain_monitor.ankr_client import AnkrClient
+
+CONTRACT = os.environ.get("CONTRACT_ADDRESS", "")
 CHAIN    = os.environ.get("CHAIN", "bsc")
-DISCORD  = os.environ["DISCORD_WEBHOOK_URL"]
+INTERVAL = int(os.environ.get("INTERVAL_MINUTES", "60"))
+DISCORD  = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
-def job():
-    client = AnkrClient()
-    holders = client.get_top_holders(CONTRACT, CHAIN, limit=20)
-    # форматируй и шли в Discord через requests.post(DISCORD, ...)
+def run_job():
+    print(f"[{datetime.utcnow()}] Scanning {CONTRACT} on {CHAIN}", flush=True)
+    try:
+        client = AnkrClient()
+        meta = client.get_token_metadata(CONTRACT, CHAIN)
+        print(json.dumps(meta, indent=2), flush=True)
 
-schedule.every(1).hours.do(job)
+        if DISCORD:
+            msg = (
+                f"**{meta.get('name')} ({meta.get('symbol')})**\n"
+                f"Price: ${meta.get('usdPrice', 'N/A')}\n"
+                f"Holders: {meta.get('holdersCount', 'N/A')}"
+            )
+            data = json.dumps({"content": msg}).encode()
+            req = urllib.request.Request(
+                DISCORD, data=data,
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(req)
+            print("Discord alert sent", flush=True)
+    except Exception as e:
+        print(f"[ERROR] {e}", flush=True)
+
+print(f"Worker started. Interval: {INTERVAL} min", flush=True)
 while True:
-    schedule.run_pending()
-    time.sleep(60)
+    run_job()
+    time.sleep(INTERVAL * 60)
